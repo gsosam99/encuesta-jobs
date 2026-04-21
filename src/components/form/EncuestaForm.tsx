@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Colegio, JobId, Pregunta, RespuestaValor } from "@/types";
 import {
   PREGUNTAS_POSICIONAMIENTO,
@@ -49,6 +49,11 @@ export function EncuestaForm({ colegio }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+
+  // Scroll suave al tope cada vez que cambia la etapa
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [etapa]);
 
   const totalEtapas = 6;
   const idxEtapa: Record<Etapa, number> = {
