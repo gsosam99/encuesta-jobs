@@ -1,11 +1,11 @@
-import Link from "next/link";
+import Link from 'next/link';
 
 export default function Home() {
   return (
     <main className="min-h-screen bg-slate-50 px-6 py-16">
       <div className="mx-auto max-w-2xl space-y-6">
         <h1 className="text-3xl font-bold text-slate-900">
-          Encuesta JTBD — Colegios
+          Perfiles de Representantes
         </h1>
         <p className="text-slate-600">
           Esta es la URL raíz. Para responder la encuesta utilice el link único
