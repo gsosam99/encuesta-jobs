@@ -7,12 +7,10 @@ import {
   PREGUNTAS_FILTRO,
   PREGUNTAS_POR_JOB,
   PREGUNTA_PRECIO_POR_JOB,
-  ETIQUETAS_JOB,
 } from "@/data/preguntas";
 import { calcularScores, determinarJob } from "@/lib/scoring";
 import {
   REGLA_ABIERTA_DEFAULT,
-  REGLA_SUB_ABIERTA,
   validarTextoAbierto,
 } from "@/lib/validacion";
 import { PreguntaRenderer } from "./PreguntaRenderer";
@@ -30,7 +28,6 @@ type Etapa =
   | "datos"
   | "posicionamiento"
   | "filtro"
-  | "calculando"
   | "job"
   | "precio"
   | "enviado";
@@ -42,7 +39,8 @@ export function EncuestaForm({ colegio }: Props) {
     Record<string, RespuestaValor>
   >({});
   const [posicionamientoSub, setPosicionamientoSub] = useState<Record<string, string>>({});
-  const [filtro, setFiltro] = useState<Record<string, string>>({});
+  // filtro maneja tanto string (opcion-unica) como string[] (ordenamiento)
+  const [filtro, setFiltro] = useState<Record<string, string | string[]>>({});
   const [jobAsignado, setJobAsignado] = useState<JobId | null>(null);
   const [jobResp, setJobResp] = useState<Record<string, RespuestaValor>>({});
   const [jobSub, setJobSub] = useState<Record<string, string>>({});
@@ -58,7 +56,6 @@ export function EncuestaForm({ colegio }: Props) {
     datos: 1,
     posicionamiento: 2,
     filtro: 3,
-    calculando: 4,
     job: 4,
     precio: 5,
     enviado: 6,
@@ -75,16 +72,24 @@ export function EncuestaForm({ colegio }: Props) {
   const setSubJob = (id: string) => (v: string) =>
     setJobSub((s) => ({ ...s, [id]: v }));
 
+  /**
+   * Valida solo campos realmente obligatorios:
+   * - abierta (requerida: true): texto con mínimo de caracteres y palabras.
+   * - ponderacion-100: total debe ser exactamente 100.
+   * - gabor-granger: al menos una respuesta registrada.
+   * - ordenamiento / opcion-unica / opciones-list: presencia de valor.
+   * - likert9: solo que haya valor numérico. La sub-abierta NUNCA es obligatoria.
+   */
   const validarRequeridas = (
     preguntas: Pregunta[],
-    resp: Record<string, RespuestaValor>,
-    sub: Record<string, string> = {}
-  ) => {
+    resp: Record<string, RespuestaValor>
+  ): boolean => {
     return preguntas
       .filter((p) => p.requerida)
       .every((p) => {
         const v = resp[p.id];
         if (v === undefined || v === null || v === "") return false;
+
         if (p.tipo === "abierta") {
           return validarTextoAbierto(v as string, REGLA_ABIERTA_DEFAULT).ok;
         }
@@ -96,14 +101,17 @@ export function EncuestaForm({ colegio }: Props) {
         if (p.tipo === "gabor-granger") {
           return Object.keys(v as object).length > 0;
         }
-        if (p.tipo === "likert9" && p.subAbierta) {
-          return validarTextoAbierto(sub[p.id] ?? "", REGLA_SUB_ABIERTA).ok;
+        if (p.tipo === "ordenamiento") {
+          // Debe tener todas las opciones ordenadas
+          const arr = v as string[];
+          return Array.isArray(arr) && arr.length === p.opciones.length;
         }
+        // likert9, opcion-unica, opciones-list: basta con que haya valor
         return true;
       });
   };
 
-  const irACalcularJob = () => {
+  const irAJob = () => {
     const scores = calcularScores(filtro);
     const job = determinarJob(scores);
     setJobAsignado(job);
@@ -115,10 +123,10 @@ export function EncuestaForm({ colegio }: Props) {
     setEnviando(true);
     setError(null);
     const scores = calcularScores(filtro);
-    // mezcla sub-respuestas dentro del payload de cada bloque para conservar todo
+    // sub-respuestas dentro del payload para preservar datos cualitativos
     const payloadPos = { ...posicionamiento, _sub: posicionamientoSub };
     const payloadJob = { ...jobResp, _sub: jobSub };
-    const { error } = await supabase.from("respuestas").insert({
+    const { error: supabaseError } = await supabase.from("respuestas").insert({
       colegio_id: colegio.id,
       nombre: datos.nombre || null,
       email: datos.email || null,
@@ -131,8 +139,8 @@ export function EncuestaForm({ colegio }: Props) {
       completada: true,
     });
     setEnviando(false);
-    if (error) {
-      setError(error.message);
+    if (supabaseError) {
+      setError(supabaseError.message);
       return;
     }
     setEtapa("enviado");
@@ -208,11 +216,7 @@ export function EncuestaForm({ colegio }: Props) {
           onSubChange={setSubPos}
           onAtras={() => setEtapa("datos")}
           onSiguiente={() => setEtapa("filtro")}
-          puedeAvanzar={validarRequeridas(
-            PREGUNTAS_POSICIONAMIENTO,
-            posicionamiento,
-            posicionamientoSub
-          )}
+          puedeAvanzar={validarRequeridas(PREGUNTAS_POSICIONAMIENTO, posicionamiento)}
         />
       )}
 
@@ -220,44 +224,31 @@ export function EncuestaForm({ colegio }: Props) {
         <BloquePreguntas
           titulo="Sus prioridades como familia"
           preguntas={PREGUNTAS_FILTRO}
-          respuestas={filtro as unknown as Record<string, RespuestaValor>}
+          respuestas={filtro as Record<string, RespuestaValor>}
           subRespuestas={{}}
           onChange={(id) => (v) =>
-            setFiltro((s) => ({ ...s, [id]: v as string }))
+            setFiltro((s) => ({ ...s, [id]: v as string | string[] }))
           }
           onSubChange={() => () => undefined}
           onAtras={() => setEtapa("posicionamiento")}
-          onSiguiente={irACalcularJob}
-          puedeAvanzar={PREGUNTAS_FILTRO.every((p) => filtro[p.id])}
+          onSiguiente={irAJob}
+          puedeAvanzar={validarRequeridas(PREGUNTAS_FILTRO, filtro as Record<string, RespuestaValor>)}
         />
       )}
 
+      {/* etapa "job": el job asignado es transparente — no se muestra al usuario */}
       {etapa === "job" && jobAsignado && (
-        <section className="space-y-4">
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
-            <p className="font-medium">
-              Su perfil predominante: {ETIQUETAS_JOB[jobAsignado].titulo}
-            </p>
-            <p className="mt-1 text-emerald-800">
-              {ETIQUETAS_JOB[jobAsignado].descripcion}
-            </p>
-          </div>
-          <BloquePreguntas
-            titulo="Sobre su experiencia con el colegio"
-            preguntas={PREGUNTAS_POR_JOB[jobAsignado]}
-            respuestas={jobResp}
-            subRespuestas={jobSub}
-            onChange={setRespJob}
-            onSubChange={setSubJob}
-            onAtras={() => setEtapa("filtro")}
-            onSiguiente={() => setEtapa("precio")}
-            puedeAvanzar={validarRequeridas(
-              PREGUNTAS_POR_JOB[jobAsignado],
-              jobResp,
-              jobSub
-            )}
-          />
-        </section>
+        <BloquePreguntas
+          titulo="Sobre su experiencia con el colegio"
+          preguntas={PREGUNTAS_POR_JOB[jobAsignado]}
+          respuestas={jobResp}
+          subRespuestas={jobSub}
+          onChange={setRespJob}
+          onSubChange={setSubJob}
+          onAtras={() => setEtapa("filtro")}
+          onSiguiente={() => setEtapa("precio")}
+          puedeAvanzar={validarRequeridas(PREGUNTAS_POR_JOB[jobAsignado], jobResp)}
+        />
       )}
 
       {etapa === "precio" && jobAsignado && (
@@ -300,12 +291,22 @@ function NavBotones({
   onSiguiente,
   puedeAvanzar = true,
   textoSiguiente = "Siguiente",
+  onIntento,
 }: {
   onAtras?: () => void;
   onSiguiente: () => void;
   puedeAvanzar?: boolean;
   textoSiguiente?: string;
+  onIntento?: () => void;
 }) {
+  const handleSiguiente = () => {
+    if (!puedeAvanzar) {
+      onIntento?.();
+      return;
+    }
+    onSiguiente();
+  };
+
   return (
     <div className="flex justify-between pt-2">
       {onAtras ? (
@@ -315,13 +316,20 @@ function NavBotones({
       ) : (
         <span />
       )}
-      <Button onClick={onSiguiente} disabled={!puedeAvanzar}>
+      <Button onClick={handleSiguiente} disabled={false}>
         {textoSiguiente}
       </Button>
     </div>
   );
 }
 
+/**
+ * BloquePreguntas — renderiza un conjunto de preguntas con navegación.
+ *
+ * Gestiona `forceValidate` internamente: cuando el usuario intenta avanzar
+ * sin completar los campos requeridos, activa los errores en todos los
+ * campos abiertos sin haber hecho blur individualmente.
+ */
 function BloquePreguntas({
   titulo,
   preguntas,
@@ -345,6 +353,22 @@ function BloquePreguntas({
   puedeAvanzar: boolean;
   textoSiguiente?: string;
 }) {
+  // Se activa la primera vez que el usuario pulsa "Siguiente" sin completar todo
+  const [forceValidate, setForceValidate] = useState(false);
+
+  const handleIntento = () => {
+    setForceValidate(true);
+  };
+
+  const handleSiguiente = () => {
+    if (!puedeAvanzar) {
+      setForceValidate(true);
+      return;
+    }
+    setForceValidate(false);
+    onSiguiente();
+  };
+
   return (
     <section className="space-y-6 rounded-lg border border-slate-200 bg-white p-6">
       <h2 className="text-lg font-semibold text-slate-900">{titulo}</h2>
@@ -356,14 +380,16 @@ function BloquePreguntas({
             onChange={onChange(p.id)}
             subValor={subRespuestas[p.id]}
             onSubChange={onSubChange(p.id)}
+            forceValidate={forceValidate}
           />
         </div>
       ))}
       <NavBotones
         onAtras={onAtras}
-        onSiguiente={onSiguiente}
+        onSiguiente={handleSiguiente}
         puedeAvanzar={puedeAvanzar}
         textoSiguiente={textoSiguiente}
+        onIntento={handleIntento}
       />
     </section>
   );

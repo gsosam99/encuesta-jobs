@@ -1,4 +1,4 @@
-import type { Pregunta, PreguntaFiltroJob, JobId } from "@/types";
+import type { Pregunta, PreguntaFiltro, JobId } from "@/types";
 
 // ============================================================
 // MÓDULO POSICIONAMIENTO (común a todos los colegios)
@@ -23,6 +23,14 @@ export const PREGUNTAS_POSICIONAMIENTO: Pregunta[] = [
       { id: "disciplina", texto: "Disciplina Estricta" },
     ],
   },
+  // ── NUEVA PREGUNTA (insertada entre pos_asociacion_marca y pos_cumplimiento) ──
+  {
+    id: "pos_razon_busqueda",
+    tipo: "abierta",
+    enunciado:
+      "¿Cuál fue la razón principal por la que usted buscó este colegio para su hijo?",
+    requerida: true,
+  },
   {
     id: "pos_cumplimiento",
     tipo: "likert9",
@@ -43,7 +51,9 @@ export const PREGUNTAS_POSICIONAMIENTO: Pregunta[] = [
 // ============================================================
 // MÓDULO A — FILTRO DEL JOB
 // ============================================================
-export const PREGUNTAS_FILTRO: PreguntaFiltroJob[] = [
+// Q1: selección simple (opcion-unica) — sin cambios
+// Q2 y Q3: ahora son "ordenamiento" — el padre ordena de mayor a menor importancia
+export const PREGUNTAS_FILTRO: PreguntaFiltro[] = [
   {
     id: "filtro_prioridad_exito",
     tipo: "opcion-unica",
@@ -73,8 +83,10 @@ export const PREGUNTAS_FILTRO: PreguntaFiltroJob[] = [
   },
   {
     id: "filtro_vision_esfuerzo",
-    tipo: "opcion-unica",
-    enunciado: "Prefiero un colegio que...",
+    tipo: "ordenamiento",
+    enunciado: "Ordene estas afirmaciones de mayor a menor importancia para usted:",
+    ayuda: "Toque o arrastre para ordenar — la primera opción es la más importante",
+    ayudaOrden: "Coloca primero lo que más importa para tu familia",
     requerida: true,
     opciones: [
       {
@@ -99,9 +111,11 @@ export const PREGUNTAS_FILTRO: PreguntaFiltroJob[] = [
   },
   {
     id: "filtro_trade_off",
-    tipo: "opcion-unica",
-    enunciado: "Si tuviera que sacrificar algo en la educación de su hijo, sacrificaría…",
-    ayuda: "Pensemos en el escenario menos malo",
+    tipo: "ordenamiento",
+    enunciado:
+      "Si tuviera que ordenar estas situaciones del escenario que más aceptaría al que menos, ¿cómo las ordenaría?",
+    ayuda: "Primero el escenario que aceptaría con más facilidad",
+    ayudaOrden: "Primero el que toleraría mejor, último el que menos aceptaría",
     requerida: true,
     opciones: [
       {
@@ -148,10 +162,11 @@ const JOB1_PREGUNTAS: Pregunta[] = [
     ],
   },
   {
+    // ── TEXTO ACTUALIZADO ──
     id: "job1_atributo_emergente",
     tipo: "abierta",
     enunciado:
-      "Más allá de lo anterior, ¿cuál es el estándar de excelencia que más destaca del colegio donde están sus hijos?",
+      "¿Qué es lo que más se acerca a un estándar de excelencia en el colegio?",
   },
   {
     id: "job1_porque_atributo",
@@ -224,10 +239,11 @@ const JOB2_PREGUNTAS: Pregunta[] = [
     ],
   },
   {
+    // ── TEXTO ACTUALIZADO ──
     id: "job2_atributo_emergente",
     tipo: "abierta",
     enunciado:
-      "Más allá de lo anterior, ¿cuál es el aspecto del colegio que más le da tranquilidad como padre/madre?",
+      "¿Qué es lo que más se acerca a un estándar de excelencia en el colegio?",
   },
   {
     id: "job2_porque_atributo",
@@ -299,10 +315,11 @@ const JOB3_PREGUNTAS: Pregunta[] = [
     ],
   },
   {
+    // ── TEXTO ACTUALIZADO ──
     id: "job3_atributo_emergente",
     tipo: "abierta",
     enunciado:
-      "Más allá de lo anterior, ¿cuál es la cualidad del colegio que más celebra como padre/madre?",
+      "¿Qué es lo que más se acerca a un estándar de excelencia en el colegio?",
   },
   {
     id: "job3_porque_atributo",
@@ -356,7 +373,7 @@ const JOB3_PREGUNTAS: Pregunta[] = [
   },
 ];
 
-// ---- GABOR-GRANGER (precio) por Job ----
+// ---- GABOR-GRANGER (precio) por Job — visualización secuencial ----
 const PASOS_PRECIO = [250, 300, 350, 400, 450, 500, 550, 600, 650, 700];
 
 const GABOR_BY_JOB: Record<JobId, Pregunta> = {
@@ -365,7 +382,7 @@ const GABOR_BY_JOB: Record<JobId, Pregunta> = {
     tipo: "gabor-granger",
     enunciado: "Disposición a pagar (mensualidad)",
     framing:
-      "Considerando una institución que garantice una preparación académica de hierro, bilingüismo real y una disciplina que forme el carácter para el éxito universitario, ¿qué tan dispuesto está a pagar este monto?",
+      "Considerando una institución que garantice una preparación académica de hierro, bilingüismo real y una disciplina que forme el carácter para el éxito universitario, ¿qué tan dispuesto está a pagar este monto mensual?",
     inicio: 250,
     pasos: PASOS_PRECIO,
     requerida: true,
@@ -375,7 +392,7 @@ const GABOR_BY_JOB: Record<JobId, Pregunta> = {
     tipo: "gabor-granger",
     enunciado: "Disposición a pagar (mensualidad)",
     framing:
-      "Considerando una institución que ofrezca atención personalizada, un entorno seguro y cálido, y resuelva la logística diaria de su familia, ¿qué tan dispuesto está a pagar este monto?",
+      "Considerando una institución que ofrezca atención personalizada, un entorno seguro y cálido, y resuelva la logística diaria de su familia, ¿qué tan dispuesto está a pagar este monto mensual?",
     inicio: 250,
     pasos: PASOS_PRECIO,
     requerida: true,
@@ -385,7 +402,7 @@ const GABOR_BY_JOB: Record<JobId, Pregunta> = {
     tipo: "gabor-granger",
     enunciado: "Disposición a pagar (mensualidad)",
     framing:
-      "Considerando una institución que ofrezca una educación integral, coherente con los valores de su familia, donde su hijo pueda desarrollar sus talentos y ser realmente feliz, ¿qué tan dispuesto está a pagar este monto?",
+      "Considerando una institución que ofrezca una educación integral, coherente con los valores de su familia, donde su hijo pueda desarrollar sus talentos y ser realmente feliz, ¿qué tan dispuesto está a pagar este monto mensual?",
     inicio: 250,
     pasos: PASOS_PRECIO,
     requerida: true,
