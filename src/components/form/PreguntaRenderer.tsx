@@ -1,7 +1,25 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Pregunta, RespuestaValor, OpcionFiltro } from "@/types";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  TouchSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   REGLA_ABIERTA_DEFAULT,
   validarTextoAbierto,
@@ -147,8 +165,15 @@ export function PreguntaRenderer({
 
 // ─────────────────────────────────────────────
 // Textarea con validación estricta (campo abierto requerido)
-// El error solo se muestra tras perder el foco o al intentar avanzar
+//
+// Estrategia de debounce:
+//  - El contador de caracteres se actualiza en tiempo real (feedback positivo).
+//  - La validación (mensajes de error/ok) solo se dispara después de que el
+//    usuario deja de escribir por DEBOUNCE_MS ms, o inmediatamente al perder
+//    el foco (onBlur) o al intentar avanzar (forceValidate).
 // ─────────────────────────────────────────────
+const DEBOUNCE_MS = 700;
+
 function TextareaValidada({
   value,
   onChange,
@@ -169,12 +194,57 @@ function TextareaValidada({
   className?: string;
 }) {
   const [touched, setTouched] = useState(false);
+
+  // `debouncedValue` es el valor sobre el que se calcula la validación mostrada.
+  // Se actualiza con retraso mientras el usuario escribe, inmediatamente en blur.
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Ref que siempre tiene el valor más reciente (para usar dentro del timeout)
+  const latestValueRef = useRef(value);
+
+  // Sincronizar ref con prop en cada render
+  latestValueRef.current = value;
+
+  // Cuando forceValidate se activa, sincronizar inmediatamente para mostrar errores
+  useEffect(() => {
+    if (forceValidate) {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      setDebouncedValue(latestValueRef.current);
+    }
+  }, [forceValidate]);
+
+  // Limpiar timer al desmontar
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  const handleChange = (v: string) => {
+    onChange(v);
+    // Resetear timer — la validación espera a que el usuario pause
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      setDebouncedValue(latestValueRef.current);
+    }, DEBOUNCE_MS);
+  };
+
+  const handleBlur = () => {
+    // Al perder el foco: sincronizar inmediatamente y marcar como tocado
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setDebouncedValue(latestValueRef.current);
+    setTouched(true);
+  };
+
+  // El contador de caracteres se lee del valor en vivo (no debounced)
   const charCount = contarCaracteres(value);
+
+  // La validación se calcula sobre el valor debounced
   const validacion = requerida
-    ? validarTextoAbierto(value, regla)
+    ? validarTextoAbierto(debouncedValue, regla)
     : { ok: true };
   const mostrarError = (touched || forceValidate) && !validacion.ok;
-  const mostrarOk = validacion.ok && value.trim().length > 0;
+  const mostrarOk = validacion.ok && debouncedValue.trim().length > 0;
 
   return (
     <div className={className}>
@@ -182,8 +252,8 @@ function TextareaValidada({
         rows={rows}
         value={value}
         placeholder={placeholder ?? "Escribe tu respuesta aquí…"}
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={() => setTouched(true)}
+        onChange={(e) => handleChange(e.target.value)}
+        onBlur={handleBlur}
         className={`w-full rounded-lg border bg-white p-3 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 transition-colors ${
           mostrarError
             ? "border-rose-300 focus:border-rose-400 focus:ring-rose-100"
@@ -229,7 +299,7 @@ function TextareaValidada({
 
 // ─────────────────────────────────────────────
 // Sub-abierta de Likert — SIEMPRE opcional, nunca bloquea
-// Muestra sugerencias amigables, nunca errores bloqueantes
+// Muestra sugerencias amigables solo cuando el usuario para de escribir
 // ─────────────────────────────────────────────
 function TextareaSubAbierta({
   label,
@@ -243,7 +313,31 @@ function TextareaSubAbierta({
   rows?: number;
 }) {
   const [focused, setFocused] = useState(false);
-  const resultado = validarTextoSuave(value);
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestRef = useRef(value);
+  latestRef.current = value;
+
+  useEffect(() => {
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, []);
+
+  const handleChange = (v: string) => {
+    onChange(v);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      setDebouncedValue(latestRef.current);
+    }, DEBOUNCE_MS);
+  };
+
+  const handleBlur = () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setDebouncedValue(latestRef.current);
+    setFocused(false);
+  };
+
+  // La sugerencia se calcula sobre el valor debounced para no cambiar mientras escribe
+  const resultado = validarTextoSuave(debouncedValue);
 
   return (
     <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-3">
@@ -252,13 +346,13 @@ function TextareaSubAbierta({
       <textarea
         rows={rows}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => handleChange(e.target.value)}
         onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
+        onBlur={handleBlur}
         placeholder="Opcional…"
         className="w-full rounded-md border border-slate-200 bg-white p-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-200"
       />
-      {(focused || value.length > 0) && resultado.sugerencia && (
+      {(focused || debouncedValue.length > 0) && resultado.sugerencia && (
         <p className="mt-1 text-xs text-slate-400 italic">{resultado.sugerencia}</p>
       )}
     </div>
@@ -302,10 +396,84 @@ function LikertEscala({
 }
 
 // ─────────────────────────────────────────────
-// Ordenamiento por prioridad
-// El usuario toca las opciones en el orden de importancia.
-// Primer toque = más importante. Se puede resetear.
+// Ordenamiento por prioridad — drag & drop con @dnd-kit
+//
+// UX:
+//  - Las tarjetas se arrastran (mouse y touch).
+//  - Teclado: Tab para enfocar, Espacio para agarrar, flechas para mover, Espacio/Enter para soltar.
+//  - Badge numérico muestra la posición actual.
+//  - Ícono de handle (⠿) indica arrastrable.
+//  - Estado completado cuando todas están ordenadas.
 // ─────────────────────────────────────────────
+
+/** Ítem individual sortable */
+function SortableItem({
+  id,
+  posicion,
+  texto,
+}: {
+  id: string;
+  posicion: number;
+  texto: string;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`flex items-center gap-3 rounded-lg border bg-white p-3 transition-shadow ${
+        isDragging
+          ? "border-slate-400 shadow-lg opacity-80 z-10"
+          : "border-slate-200 shadow-sm hover:border-slate-300"
+      }`}
+    >
+      {/* Badge de posición */}
+      <span className="shrink-0 flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white select-none">
+        {posicion}
+      </span>
+
+      {/* Texto */}
+      <span className="flex-1 text-sm text-slate-800 leading-snug select-none">
+        {texto}
+      </span>
+
+      {/* Handle de arrastre */}
+      <button
+        type="button"
+        className={`shrink-0 cursor-grab touch-none rounded p-1 text-slate-400 hover:text-slate-600 active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-slate-300 ${
+          isDragging ? "cursor-grabbing" : ""
+        }`}
+        aria-label="Arrastrar para reordenar"
+        {...attributes}
+        {...listeners}
+      >
+        {/* Ícono de 6 puntos (grip vertical) */}
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden>
+          <circle cx="4" cy="2" r="1.5" />
+          <circle cx="10" cy="2" r="1.5" />
+          <circle cx="4" cy="7" r="1.5" />
+          <circle cx="10" cy="7" r="1.5" />
+          <circle cx="4" cy="12" r="1.5" />
+          <circle cx="10" cy="12" r="1.5" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
 function OrdenamientoPrioridad({
   opciones,
   ayudaOrden,
@@ -317,130 +485,79 @@ function OrdenamientoPrioridad({
   valor: string[];
   onChange: (v: string[]) => void;
 }) {
-  const posicionDe = (id: string) => {
-    const idx = valor.indexOf(id);
-    return idx === -1 ? null : idx + 1;
-  };
+  // Si aún no hay orden establecido, inicializar con el orden original
+  const ordenActual = valor.length === opciones.length
+    ? valor
+    : opciones.map((o) => o.id);
 
-  const toggleOpcion = (id: string) => {
-    if (valor.includes(id)) {
-      // Quitar del orden
-      onChange(valor.filter((v) => v !== id));
-    } else {
-      // Agregar al final del orden
-      onChange([...valor, id]);
+  // Sincronizar estado interno cuando el padre aún no tiene orden
+  useEffect(() => {
+    if (valor.length !== opciones.length) {
+      onChange(opciones.map((o) => o.id));
     }
+    // Solo en mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      // Requiere mover 8px antes de iniciar drag (evita clicks accidentales)
+      activationConstraint: { distance: 8 },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 200, tolerance: 8 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = ordenActual.indexOf(String(active.id));
+    const newIndex = ordenActual.indexOf(String(over.id));
+    onChange(arrayMove(ordenActual, oldIndex, newIndex));
   };
 
-  const moverArriba = (id: string) => {
-    const idx = valor.indexOf(id);
-    if (idx <= 0) return;
-    const next = [...valor];
-    [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
-    onChange(next);
-  };
-
-  const moverAbajo = (id: string) => {
-    const idx = valor.indexOf(id);
-    if (idx === -1 || idx >= valor.length - 1) return;
-    const next = [...valor];
-    [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
-    onChange(next);
-  };
-
-  const todosSeleccionados = valor.length === opciones.length;
+  const textoDeId = (id: string) =>
+    opciones.find((o) => o.id === id)?.texto ?? id;
 
   return (
     <div className="space-y-3">
       {ayudaOrden && (
-        <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
           {ayudaOrden}
         </p>
       )}
 
-      {/* Instrucción contextual */}
-      {!todosSeleccionados && (
-        <p className="text-sm text-slate-500">
-          Toca cada afirmación en el orden de importancia (
-          <strong className="text-slate-700">primero la más importante</strong>).
-        </p>
-      )}
-      {todosSeleccionados && (
-        <p className="text-sm text-emerald-700 font-medium">
-          ✓ Ordenadas. Usa las flechas si quieres ajustar el orden.
-        </p>
-      )}
+      <p className="text-sm text-slate-500">
+        Arrastra las opciones para ordenarlas de{" "}
+        <strong className="text-slate-700">más importante</strong> (arriba) a{" "}
+        <strong className="text-slate-700">menos importante</strong> (abajo).
+      </p>
 
-      <div className="space-y-2">
-        {opciones.map((op) => {
-          const pos = posicionDe(op.id);
-          const seleccionada = pos !== null;
-
-          return (
-            <div
-              key={op.id}
-              className={`flex items-start gap-3 rounded-lg border p-3 transition-all ${
-                seleccionada
-                  ? "border-slate-900 bg-slate-50"
-                  : "border-slate-200 bg-white hover:border-slate-300"
-              }`}
-            >
-              {/* Badge de posición */}
-              <button
-                type="button"
-                onClick={() => toggleOpcion(op.id)}
-                className={`shrink-0 flex h-7 w-7 items-center justify-center rounded-full border text-xs font-bold transition-all ${
-                  seleccionada
-                    ? "border-slate-900 bg-slate-900 text-white"
-                    : "border-slate-300 bg-white text-slate-400 hover:border-slate-500"
-                }`}
-                title={seleccionada ? "Quitar del orden" : "Seleccionar"}
-              >
-                {seleccionada ? pos : "·"}
-              </button>
-
-              {/* Texto */}
-              <span className={`flex-1 text-sm leading-snug ${seleccionada ? "text-slate-900" : "text-slate-600"}`}>
-                {op.texto}
-              </span>
-
-              {/* Flechas de ajuste (solo si seleccionada) */}
-              {seleccionada && (
-                <div className="flex flex-col gap-0.5">
-                  <button
-                    type="button"
-                    onClick={() => moverArriba(op.id)}
-                    disabled={pos === 1}
-                    className="rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-20"
-                    title="Más importante"
-                  >
-                    ▲
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => moverAbajo(op.id)}
-                    disabled={pos === valor.length}
-                    className="rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-20"
-                    title="Menos importante"
-                  >
-                    ▼
-                  </button>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {valor.length > 0 && (
-        <button
-          type="button"
-          onClick={() => onChange([])}
-          className="text-xs text-slate-400 hover:text-slate-600 underline"
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+      >
+        <SortableContext
+          items={ordenActual}
+          strategy={verticalListSortingStrategy}
         >
-          Reiniciar orden
-        </button>
-      )}
+          <div className="space-y-2">
+            {ordenActual.map((id, idx) => (
+              <SortableItem
+                key={id}
+                id={id}
+                posicion={idx + 1}
+                texto={textoDeId(id)}
+              />
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
     </div>
   );
 }
@@ -518,8 +635,11 @@ function GaborGrangerSecuencial({
     return Math.min(respondidos, pasos.length - 1);
   });
 
-  const [animDir, setAnimDir] = useState<"in" | "out">("in");
   const [visible, setVisible] = useState(true);
+
+  // `revisando` permite mostrar la tarjeta aunque `completado` sea true.
+  // Se activa con "Revisar última respuesta" y se desactiva al volver al resumen.
+  const [revisando, setRevisando] = useState(false);
 
   const precio = pasos[currentStep];
   const respuestaActual = valor[String(precio)];
@@ -527,12 +647,10 @@ function GaborGrangerSecuencial({
   const completado = totalRespondidos === pasos.length;
 
   const irA = useCallback(
-    (nextIdx: number, dir: "in" | "out") => {
+    (nextIdx: number) => {
       setVisible(false);
-      setAnimDir(dir);
       setTimeout(() => {
         setCurrentStep(nextIdx);
-        setAnimDir(dir === "in" ? "out" : "in");
         setVisible(true);
       }, 200);
     },
@@ -542,20 +660,26 @@ function GaborGrangerSecuencial({
   const seleccionarRespuesta = (n: number) => {
     const nuevo = { ...valor, [String(precio)]: n };
     onChange(nuevo);
-    // Avanzar automáticamente al siguiente paso
+    // Avanzar automáticamente al siguiente paso (solo si no hemos terminado aún)
     if (currentStep < pasos.length - 1) {
-      setTimeout(() => irA(currentStep + 1, "in"), 350);
+      setTimeout(() => irA(currentStep + 1), 350);
+    } else {
+      // Último paso respondido: salir del modo revisión y mostrar resumen
+      setRevisando(false);
     }
   };
 
-  if (completado) {
+  if (completado && !revisando) {
     return (
       <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800 space-y-2">
         <p className="font-semibold">✓ Sección completada</p>
         <p className="text-xs">Has respondido los {pasos.length} escalones de precio.</p>
         <button
           type="button"
-          onClick={() => irA(pasos.length - 1, "out")}
+          onClick={() => {
+            setRevisando(true);
+            irA(pasos.length - 1);
+          }}
           className="text-xs text-emerald-700 underline hover:text-emerald-900"
         >
           Revisar última respuesta
@@ -633,22 +757,29 @@ function GaborGrangerSecuencial({
 
       {/* Navegación */}
       <div className="flex items-center justify-between">
+        {/* ← Anterior: siempre visible, deshabilitado en el primer paso */}
         <button
           type="button"
-          onClick={() => irA(Math.max(0, currentStep - 1), "out")}
+          onClick={() => irA(Math.max(0, currentStep - 1))}
           disabled={currentStep === 0}
-          className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-800 disabled:opacity-30 disabled:cursor-not-allowed"
+          className="text-sm text-slate-500 hover:text-slate-800 disabled:opacity-30 disabled:cursor-not-allowed"
         >
           ← Anterior
         </button>
 
-        {respuestaActual !== undefined && currentStep < pasos.length - 1 && (
+        {/* Siguiente → solo visible en modo revisión.
+            En el último paso va al resumen; en los demás avanza una tarjeta. */}
+        {revisando && (
           <button
             type="button"
-            onClick={() => irA(currentStep + 1, "in")}
-            className="flex items-center gap-1 text-sm text-slate-700 font-medium hover:text-slate-900"
+            onClick={() =>
+              currentStep === pasos.length - 1
+                ? setRevisando(false)
+                : irA(currentStep + 1)
+            }
+            className="text-sm text-slate-700 font-medium hover:text-slate-900"
           >
-            Siguiente →
+            {currentStep === pasos.length - 1 ? "Ver resumen →" : "Siguiente →"}
           </button>
         )}
       </div>
