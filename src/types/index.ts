@@ -29,12 +29,13 @@ export interface RespuestaCompleta extends RespuestaPayload {
 }
 
 export type TipoPregunta =
-  | "likert9"        // escala 1-9
-  | "abierta"        // texto libre
-  | "opcion-unica"   // radio con opciones que mapean a Job (filtro)
-  | "opciones-list" // selección simple sin scoring
-  | "ponderacion-100" // distribuir 100 puntos entre N atributos
-  | "gabor-granger"; // precio escalonado
+  | "likert9"          // escala 1-9 con sub-abierta opcional
+  | "abierta"          // texto libre con validación mínima
+  | "opcion-unica"     // radio con opciones que mapean a Job (filtro Q1)
+  | "ordenamiento"     // ordenar opciones por prioridad (filtro Q2, Q3)
+  | "opciones-list"    // selección simple sin scoring de Job
+  | "ponderacion-100"  // distribuir 100 puntos entre N atributos
+  | "gabor-granger";   // precio escalonado — visualización secuencial
 
 export interface OpcionFiltro {
   id: string;
@@ -52,6 +53,7 @@ export interface PreguntaBase {
 
 export interface PreguntaLikert extends PreguntaBase {
   tipo: "likert9";
+  /** Texto de la sub-pregunta abierta. Si existe, se muestra pero no es obligatoria. */
   subAbierta?: string;
 }
 
@@ -63,6 +65,17 @@ export interface PreguntaAbierta extends PreguntaBase {
 export interface PreguntaFiltroJob extends PreguntaBase {
   tipo: "opcion-unica";
   opciones: OpcionFiltro[];
+}
+
+/**
+ * El usuario ordena las opciones de mayor a menor importancia.
+ * El valor almacenado es string[] con los IDs en el orden elegido.
+ * Para scoring solo se usa el primer elemento (posición 1).
+ */
+export interface PreguntaOrdenamiento extends PreguntaBase {
+  tipo: "ordenamiento";
+  opciones: OpcionFiltro[];
+  ayudaOrden?: string;
 }
 
 export interface PreguntaOpciones extends PreguntaBase {
@@ -86,6 +99,9 @@ export type Pregunta =
   | PreguntaLikert
   | PreguntaAbierta
   | PreguntaFiltroJob
+  | PreguntaOrdenamiento
   | PreguntaOpciones
   | PreguntaPonderacion
   | PreguntaGaborGranger;
+
+export type PreguntaFiltro = PreguntaFiltroJob | PreguntaOrdenamiento;
